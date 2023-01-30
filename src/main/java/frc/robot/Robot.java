@@ -17,6 +17,7 @@ import edu.wpi.first.wpilibj.RobotController;
 import edu.wpi.first.wpilibj.TimedRobot;
 import edu.wpi.first.wpilibj.motorcontrol.PWMSparkMax;
 import edu.wpi.first.wpilibj.simulation.BatterySim;
+import edu.wpi.first.wpilibj.simulation.ElevatorSim;
 import edu.wpi.first.wpilibj.simulation.EncoderSim;
 import edu.wpi.first.wpilibj.simulation.RoboRioSim;
 import edu.wpi.first.wpilibj.simulation.SingleJointedArmSim;
@@ -48,12 +49,10 @@ public class Robot extends TimedRobot {
   private final DCMotor m_armGearbox = DCMotor.getVex775Pro(2);
 
   // Standard classes for controlling our arm
-  private final ProfiledPIDController m_topController = new ProfiledPIDController(kArmKp, kArmKi, 0, new TrapezoidProfile.Constraints(2, 5));
   private final ProfiledPIDController m_bottomController = new ProfiledPIDController(kArmKp, kArmKi, 0, new TrapezoidProfile.Constraints(2, 5));
-  private final Encoder m_topEncoder = new Encoder(kEncoderAChannel, kEncoderBChannel);
+  // private final Encoder m_topEncoder = new Encoder(kEncoderAChannel, kEncoderBChannel);
   private final Encoder m_bottomEncoder = new Encoder(kEncoderAChannel+2, kEncoderBChannel+2);
 
-  private final PWMSparkMax m_topMotor = new PWMSparkMax(kMotorPort);
   private final PWMSparkMax m_bottomMotor = new PWMSparkMax(kMotorPort+1);
   private final Joystick m_joystick = new Joystick(kJoystickPort);
 
@@ -89,21 +88,9 @@ public class Robot extends TimedRobot {
   private static final int scoreHighBottom = 135;
   private static final int scoreHighTop = 160;
 
-  // This arm sim represents an arm that can travel from -75 degrees (rotated down front)
-  // to 255 degrees (rotated down in the back).
-  private final SingleJointedArmSim m_arm_topSim =
-      new SingleJointedArmSim(
-          m_armGearbox,
-          m_armReduction,
-          SingleJointedArmSim.estimateMOI(m_arm_topLength, m_arm_topMass),
-          m_arm_topLength,
-          Units.degreesToRadians(m_arm_top_min_angle),
-          Units.degreesToRadians(m_arm_top_max_angle),
-          m_arm_topMass,
-          false,
-          VecBuilder.fill(kArmEncoderDistPerPulse) // Add noise with a std-dev of 1 tick
-          );
-  private final SingleJointedArmSim m_arm_bottomSim =
+  // // This arm sim represents an arm that can travel from -75 degrees (rotated down front)
+  // // to 255 degrees (rotated down in the back).
+  private final SingleJointedArmSim m_arm =
           new SingleJointedArmSim(
               m_armGearbox,
               m_armReduction,
@@ -115,7 +102,10 @@ public class Robot extends TimedRobot {
               true,
               VecBuilder.fill(kArmEncoderDistPerPulse) // Add noise with a std-dev of 1 tick
               );
-  private final EncoderSim m_topEncoderSim = new EncoderSim(m_topEncoder);
+  private final ElevatorSim m_arm_bottomSim =
+          new ElevatorSim(
+            m_armGearbox, m_armReduction, 5, Units.inchesToMeters(2.0), 7, 20, VecBuilder.fill(0.01));
+  // private final EncoderSim m_topEncoderSim = new EncoderSim(m_topEncoder);
   private final EncoderSim m_bottomEncoderSim = new EncoderSim(m_bottomEncoder);
   SendableChooser<Integer> controlMode = new SendableChooser<Integer>();
   SendableChooser<Integer> presetChooser = new SendableChooser<Integer>();
@@ -148,29 +138,28 @@ public class Robot extends TimedRobot {
       m_armPivot.append(new MechanismLigament2d("aframe1", 24, -50, 10, new Color8Bit(Color.kSilver)));
   private final MechanismLigament2d m_bumper =
       gridHome.append(new MechanismLigament2d("Bumper", 30.5, 0, 60, new Color8Bit(Color.kRed)));
-  private final MechanismLigament2d m_arm_top =
-      m_arm_bottom.append(
-          new MechanismLigament2d(
-              "Arm Top",
-              28.5 + 3.0,
-              Units.radiansToDegrees(m_arm_topSim.getAngleRads()),
-              10,
-              new Color8Bit(Color.kPurple)));
+  // private final MechanismLigament2d m_arm_top =
+  //     m_arm_bottom.append(
+  //         new MechanismLigament2d(
+  //             "Arm Top",
+  //             28.5 + 3.0,
+  //             Units.radiansToDegrees(m_arm_topSim.getAngleRads()),
+  //             10,
+  //             new Color8Bit(Color.kPurple)));
     private final MechanismLigament2d m_intake =
-    m_arm_top.append(
+    m_arm_bottom.append(
         new MechanismLigament2d(
             "Intake",
             7,
-            Units.radiansToDegrees(m_arm_topSim.getAngleRads()),
+            0.0,
             40,
             new Color8Bit(Color.kWhite)));
         
 
   @Override
   public void robotInit() {
-    m_topEncoder.setDistancePerPulse(kArmEncoderDistPerPulse);
+    // m_topEncoder.setDistancePerPulse(kArmEncoderDistPerPulse);
     m_bottomEncoder.setDistancePerPulse(kArmEncoderDistPerPulse);
-    SmartDashboard.putNumber("Setpoint top (degrees)", 90);
     SmartDashboard.putNumber("Setpoint bottom (degrees)", 90);
     controlMode.setDefaultOption("Presets (Setpoints)", 0);
     controlMode.addOption("Virtual Four Bar", 1);
@@ -188,27 +177,33 @@ public class Robot extends TimedRobot {
     SmartDashboard.putData("Arm Sim", m_mech2d);
   }
 
+
   @Override
   public void simulationPeriodic() {
     // In this method, we update our simulation of what our arm is doing
     // First, we set our "inputs" (voltages)
-    m_arm_topSim.setInput(m_topMotor.get() * RobotController.getBatteryVoltage());
-    m_arm_bottomSim.setInput(m_bottomMotor.get() * RobotController.getBatteryVoltage());
+    // m_arm_topSim.setInput(m_topMotor.get() * RobotController.getBatteryVoltage());
+    m_arm.setInput(m_bottomMotor.get() * RobotController.getBatteryVoltage());
 
     // Next, we update it. The standard loop time is 20ms.
-    m_arm_topSim.update(0.020);
+    // m_arm_topSim.update(0.020);
     m_arm_bottomSim.update(0.020);
 
+    m_arm.update(0.020);
+
+    // m_bottomEncoderSim.setDistance(m_arm_bottomSim.getPositionMeters());
+
     // Finally, we set our simulated encoder's readings and simulated battery voltage
-    m_topEncoderSim.setDistance(m_arm_topSim.getAngleRads());
-    m_bottomEncoderSim.setDistance(m_arm_bottomSim.getAngleRads());
+    // m_topEncoderSim.setDistance(m_arm_topSim.getAngleRads());
+    m_bottomEncoderSim.setDistance(m_arm.getAngleRads());
     // SimBattery estimates loaded battery voltages
     RoboRioSim.setVInVoltage(
-        BatterySim.calculateDefaultBatteryLoadedVoltage(m_arm_topSim.getCurrentDrawAmps() + m_arm_bottomSim.getCurrentDrawAmps()));
-
+        BatterySim.calculateDefaultBatteryLoadedVoltage(m_arm_bottomSim.getCurrentDrawAmps()+m_arm.getCurrentDrawAmps()));
+    SmartDashboard.putNumber("m_bottomMotor.get()", m_bottomEncoderSim.getDistance());
     // Update the Mechanism Arm angle based on the simulated arm angle
-    m_arm_top.setAngle(Units.radiansToDegrees(m_arm_topSim.getAngleRads()));
-    m_arm_bottom.setAngle(Units.radiansToDegrees(m_arm_bottomSim.getAngleRads()));
+    // m_arm_top.setAngle(Units.radiansToDegrees(m_arm_topSim.getAngleRads()));
+    m_arm_bottom.setLength(m_arm_bottomSim.getPositionMeters());
+    m_arm_bottom.setAngle(Units.radiansToDegrees(m_arm.getAngleRads()));
   }
 
   @Override
@@ -217,15 +212,15 @@ public class Robot extends TimedRobot {
     switch(controlMode.getSelected()){
       case 1:
         // Here, we run PID control where the top arm acts like a four-bar relative to the bottom. 
-        double pidOutputTop = m_topController.calculate(m_topEncoder.getDistance(), Units.degreesToRadians(MathUtil.clamp(SmartDashboard.getNumber("Setpoint top (degrees)", 0) - MathUtil.clamp(SmartDashboard.getNumber("Setpoint bottom (degrees)", 150), m_arm_bottom_min_angle, m_arm_bottom_max_angle), m_arm_top_min_angle, m_arm_top_max_angle)));
-        m_topMotor.setVoltage(pidOutputTop);
+        // double pidOutputTop = m_topController.calculate(m_topEncoder.getDistance(), Units.degreesToRadians(MathUtil.clamp(SmartDashboard.getNumber("Setpoint top (degrees)", 0) - MathUtil.clamp(SmartDashboard.getNumber("Setpoint bottom (degrees)", 150), m_arm_bottom_min_angle, m_arm_bottom_max_angle), m_arm_top_min_angle, m_arm_top_max_angle)));
+        // m_topMotor.setVoltage(pidOutputTop);
   
         double pidOutputBottom = m_bottomController.calculate(m_bottomEncoder.getDistance(), Units.degreesToRadians(MathUtil.clamp(SmartDashboard.getNumber("Setpoint bottom (degrees)", 0), m_arm_bottom_min_angle, m_arm_bottom_max_angle)));
         m_bottomMotor.setVoltage(pidOutputBottom);
         break;
       case 2:
-        pidOutputTop = m_topController.calculate(m_topEncoder.getDistance(), Units.degreesToRadians(MathUtil.clamp(SmartDashboard.getNumber("Setpoint top (degrees)", 0), m_arm_top_min_angle, m_arm_top_max_angle)));
-        m_topMotor.setVoltage(pidOutputTop);
+        // pidOutputTop = m_topController.calculate(m_topEncoder.getDistance(), Units.degreesToRadians(MathUtil.clamp(SmartDashboard.getNumber("Setpoint top (degrees)", 0), m_arm_top_min_angle, m_arm_top_max_angle)));
+        // m_topMotor.setVoltage(pidOutputTop);
 
         pidOutputBottom = m_bottomController.calculate(m_bottomEncoder.getDistance(), Units.degreesToRadians(MathUtil.clamp(SmartDashboard.getNumber("Setpoint bottom (degrees)", 0), m_arm_bottom_min_angle, m_arm_bottom_max_angle)));
         m_bottomMotor.setVoltage(pidOutputBottom);
@@ -262,11 +257,11 @@ public class Robot extends TimedRobot {
             bottomSetpoint = stowedBottom;
             break;
         }
+        
         // Here, we run PID control where the arm moves to the selected setpoint.
-        pidOutputTop = m_topController.calculate(m_topEncoder.getDistance(), Units.degreesToRadians(topSetpoint - bottomSetpoint));
-        m_topMotor.setVoltage(pidOutputTop);
+        // pidOutputTop = m_topController.calculate(m_topEncoder.getDistance(), Units.degreesToRadians(topSetpoint - bottomSetpoint));
+        // m_topMotor.setVoltage(pidOutputTop);
         SmartDashboard.putNumber("Setpoint bottom (degrees)", bottomSetpoint);
-        SmartDashboard.putNumber("Setpoint top (degrees)", topSetpoint);
         pidOutputBottom = m_bottomController.calculate(m_bottomEncoder.getDistance(), Units.degreesToRadians(bottomSetpoint));
         m_bottomMotor.setVoltage(pidOutputBottom);
         break;
@@ -278,6 +273,6 @@ public class Robot extends TimedRobot {
   @Override
   public void disabledInit() {
     // This just makes sure that our simulation code knows that the motor's off.
-    m_topMotor.set(0.0);
+    m_bottomMotor.set(0.0);
   }
 }
